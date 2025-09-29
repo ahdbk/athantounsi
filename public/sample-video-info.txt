@@ -1,0 +1,20 @@
+Sample Video Information
+========================
+
+This application requires you to upload a video file to test the milestone functionality.
+
+For testing purposes, you can:
+1. Use any MP4 video file
+2. Set a milestone time (e.g., 30 minutes = 1800 seconds)
+3. Set a target time (e.g., 13:00)
+4. Click "Calculate & Jump to Start Time" to see the calculated start position
+
+The app will calculate when to start the video so that the milestone occurs at your target time using:
+Start Time = Milestone Time - (Target Time - Current Time)
+
+Example:
+- Current time: 12:30
+- Target time: 13:00
+- Milestone at: 30 minutes into video
+- Delta time: 30 minutes (13:00 - 12:30)
+- Start time: 0 minutes (30 min milestone - 30 min delta = 0)
