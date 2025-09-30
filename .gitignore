@@ -43,3 +43,10 @@ next-env.d.ts
 
 # large video files
 *.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.m4v
