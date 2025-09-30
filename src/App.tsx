@@ -1,6 +1,6 @@
 import VideoPlayer from '@/components/VideoPlayer';
 
-export default function Home() {
+function App() {
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-6xl mx-auto">
@@ -12,3 +12,5 @@ export default function Home() {
     </div>
   );
 }
+
+export default App;

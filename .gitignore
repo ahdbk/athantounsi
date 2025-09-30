@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/dist
 /.pnp
 .pnp.*
 .yarn/*
@@ -41,5 +42,4 @@ yarn-error.log*
 next-env.d.ts
 
 # large video files
-public/video.mp4
 *.mp4

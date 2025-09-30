@@ -1,12 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, RotateCcw } from 'lucide-react';
-
-interface MilestoneConfig {
-  milestoneTime: number; // in seconds
-  targetTime: string; // time in format "HH:MM"
-}
+import { usePlaylist } from '@/hooks/usePlaylist';
+import PlaylistDisplay from './PlaylistDisplay';
 
 const VideoPlayer = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -14,33 +11,36 @@ const VideoPlayer = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [videoSrc, setVideoSrc] = useState('/video.mp4');
-  const [milestoneConfig, setMilestoneConfig] = useState<MilestoneConfig>({
-    milestoneTime: 1800, // 30 minutes in seconds - will be updated when video loads
-    targetTime: '13:00'
-  });
+  const [videoSrc, setVideoSrc] = useState('');
   const [calculatedStartTime, setCalculatedStartTime] = useState<number | null>(null);
 
-  // Time calculation logic
-  const calculateStartTime = () => {
-    const currentDate = new Date();
-    const [targetHours, targetMinutes] = milestoneConfig.targetTime.split(':').map(Number);
+  const {
+    playlist,
+    updateVideoDuration,
+    calculatePlaylistStartTime,
+    addVideoToPlaylist,
+    setCurrentVideo,
+    setTargetTime,
+    getNextVideo,
+    nextVideo
+  } = usePlaylist();
 
-    const targetDate = new Date();
-    targetDate.setHours(targetHours, targetMinutes, 0, 0);
+  // Get current video from playlist
+  const getCurrentVideo = useCallback(() => {
+    return playlist.videos[playlist.currentVideoIndex];
+  }, [playlist.videos, playlist.currentVideoIndex]);
 
-    // If target time is tomorrow
-    if (targetDate <= currentDate) {
-      targetDate.setDate(targetDate.getDate() + 1);
+  // Handle video end - move to next video
+  const handleVideoEnd = () => {
+    const nextVid = getNextVideo();
+    if (nextVid) {
+      nextVideo();
+    } else {
+      setIsPlaying(false);
     }
-
-    const deltaTime = (targetDate.getTime() - currentDate.getTime()) / 1000; // in seconds
-    const startTime = milestoneConfig.milestoneTime - deltaTime;
-
-    return Math.max(0, startTime); // Don't go negative
   };
 
-  const formatTime = (seconds: number) => {
+  const formatTime = useCallback((seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
@@ -50,12 +50,11 @@ const VideoPlayer = () => {
     } else {
       return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
-  };
+  }, []);
 
-  const generateTimelinePreviews = () => {
+  const generateTimelinePreviews = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || duration === 0) return;
 
-    const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -80,16 +79,21 @@ const VideoPlayer = () => {
       ctx.fillRect(x - 1, 0, 2, canvas.height - 10);
     }
 
-    // Draw milestone marker
-    const milestoneX = (milestoneConfig.milestoneTime / duration) * canvas.width;
-    ctx.fillStyle = '#ef4444';
-    ctx.fillRect(milestoneX - 3, 0, 6, canvas.height);
+    // Draw video transition marker (for video2 start time in playlist mode)
+    if (playlist.videos.length >= 2) {
+      const video1Duration = playlist.videos[0]?.duration || 0;
+      if (playlist.currentVideoIndex === 0 && video1Duration > 0) {
+        const transitionX = (video1Duration / duration) * canvas.width;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(transitionX - 3, 0, 6, canvas.height);
 
-    // Draw milestone label
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('M', milestoneX, canvas.height - 15);
+        // Draw transition label
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('V2', transitionX, canvas.height - 15);
+      }
+    }
 
     // Draw current playhead
     const currentX = (currentTime / duration) * canvas.width;
@@ -109,7 +113,7 @@ const VideoPlayer = () => {
     const timeLabel = formatTime(currentTime);
     const labelX = currentX < 50 ? currentX + 10 : currentX > canvas.width - 50 ? currentX - 10 : currentX;
     ctx.fillText(timeLabel, labelX, 25);
-  };
+  }, [duration, currentTime, playlist, formatTime]);
 
   const handlePlayPause = () => {
     if (!videoRef.current) return;
@@ -133,13 +137,8 @@ const VideoPlayer = () => {
       const videoDuration = videoRef.current.duration;
       setDuration(videoDuration);
 
-      // Set milestone to middle of video if current milestone is beyond video duration
-      if (milestoneConfig.milestoneTime > videoDuration) {
-        setMilestoneConfig(prev => ({
-          ...prev,
-          milestoneTime: Math.floor(videoDuration / 2)
-        }));
-      }
+      // Update duration in playlist
+      updateVideoDuration(playlist.currentVideoIndex, videoDuration);
     }
   };
 
@@ -156,26 +155,42 @@ const VideoPlayer = () => {
   };
 
   const jumpToCalculatedStart = () => {
-    const startTime = calculateStartTime();
-    setCalculatedStartTime(startTime);
+    if (playlist.videos.length >= 2) {
+      const startTime = calculatePlaylistStartTime();
+      setCalculatedStartTime(startTime);
 
-    if (videoRef.current && startTime >= 0) {
-      videoRef.current.currentTime = startTime;
-      setCurrentTime(startTime);
+      // Start from video1 at calculated time
+      setCurrentVideo(0);
+      if (videoRef.current && startTime >= 0) {
+        videoRef.current.currentTime = startTime;
+        setCurrentTime(startTime);
+
+        // Auto-play the playlist
+        videoRef.current.play();
+        setIsPlaying(true);
+      }
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setVideoSrc(url);
-    }
+  const handleVideoSelect = (index: number) => {
+    setCurrentVideo(index);
   };
+
+  const handleVideoUpload = (file: File) => {
+    addVideoToPlaylist(file);
+  };
+
+  // Update video source when current video changes
+  useEffect(() => {
+    const currentVideo = getCurrentVideo();
+    if (currentVideo) {
+      setVideoSrc(currentVideo.url);
+    }
+  }, [playlist.currentVideoIndex, playlist.videos, getCurrentVideo]);
 
   useEffect(() => {
     generateTimelinePreviews();
-  }, [duration, currentTime, milestoneConfig]);
+  }, [generateTimelinePreviews]);
 
   // Update timeline more frequently when playing
   useEffect(() => {
@@ -189,168 +204,120 @@ const VideoPlayer = () => {
   }, [isPlaying]);
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      {/* Video Selection */}
-      <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Video Source
-        </label>
-        <div className="flex gap-4 items-center mb-3">
-          <button
-            onClick={() => setVideoSrc('/video.mp4')}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors duration-200"
-          >
-            Use Sample Video
-          </button>
-          <span className="text-gray-500">or</span>
-        </div>
-        <input
-          type="file"
-          accept="video/*"
-          onChange={handleFileUpload}
-          className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-        />
-      </div>
+    <div className="space-y-6">
+      {/* Playlist Display */}
+      <PlaylistDisplay
+        videos={playlist.videos}
+        currentVideoIndex={playlist.currentVideoIndex}
+        onVideoSelect={handleVideoSelect}
+        onVideoUpload={handleVideoUpload}
+      />
 
-      {/* Milestone Configuration */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div>
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        {/* Target Time Configuration */}
+        <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Milestone Time
-          </label>
-          <input
-            type="range"
-            min="0"
-            max={duration || 3600}
-            step="1"
-            value={milestoneConfig.milestoneTime}
-            onChange={(e) => setMilestoneConfig(prev => ({
-              ...prev,
-              milestoneTime: parseInt(e.target.value)
-            }))}
-            className="w-full mb-2"
-          />
-          <div className="flex justify-between items-center">
-            <input
-              type="text"
-              value={formatTime(milestoneConfig.milestoneTime)}
-              onChange={(e) => {
-                const timeStr = e.target.value;
-                const parts = timeStr.split(':').map(Number);
-                let totalSeconds = 0;
-
-                if (parts.length === 2) {
-                  const [mins, secs] = parts;
-                  if (!isNaN(mins) && !isNaN(secs)) {
-                    totalSeconds = (mins * 60) + secs;
-                  }
-                } else if (parts.length === 3) {
-                  const [hours, mins, secs] = parts;
-                  if (!isNaN(hours) && !isNaN(mins) && !isNaN(secs)) {
-                    totalSeconds = (hours * 3600) + (mins * 60) + secs;
-                  }
-                }
-
-                if (totalSeconds > 0) {
-                  setMilestoneConfig(prev => ({
-                    ...prev,
-                    milestoneTime: Math.min(totalSeconds, duration || 3600)
-                  }));
-                }
-              }}
-              placeholder="MM:SS or HH:MM:SS"
-              className="px-3 py-1 border border-gray-300 rounded text-sm w-32"
-            />
-            <span className="text-sm text-gray-500">
-              / {formatTime(duration)}
-            </span>
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Target Time (HH:MM)
+            Target Time - When Video2 Should Start (HH:MM)
           </label>
           <input
             type="time"
-            value={milestoneConfig.targetTime}
-            onChange={(e) => setMilestoneConfig(prev => ({
-              ...prev,
-              targetTime: e.target.value
-            }))}
+            value={playlist.targetTime}
+            onChange={(e) => setTargetTime(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
-        </div>
-      </div>
-
-      {/* Calculate Start Time Button */}
-      <div className="mb-6">
-        <button
-          onClick={jumpToCalculatedStart}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center gap-2"
-        >
-          <RotateCcw size={16} />
-          Calculate & Jump to Start Time
-        </button>
-        {calculatedStartTime !== null && (
-          <p className="mt-2 text-sm text-gray-600">
-            Calculated start time: {formatTime(calculatedStartTime)}
+          <p className="text-sm text-gray-600 mt-1">
+            Video2 will automatically start playing at this time. Video1 will begin earlier to ensure perfect timing.
           </p>
-        )}
-      </div>
-
-      {/* Video Player */}
-      {videoSrc && (
-        <div className="mb-4">
-          <video
-            ref={videoRef}
-            src={videoSrc}
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={handleLoadedMetadata}
-            className="w-full rounded-lg"
-            controls={false}
-          />
         </div>
-      )}
 
-      {/* Timeline Preview */}
-      {duration > 0 && (
-        <div className="mb-4">
-          <canvas
-            ref={canvasRef}
-            width={800}
-            height={60}
-            onClick={handleSeek}
-            className="w-full h-15 bg-gray-200 rounded cursor-pointer"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>0:00</span>
-            <span>Milestone: {formatTime(milestoneConfig.milestoneTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Controls */}
-      {videoSrc && (
-        <div className="flex items-center justify-between">
+        {/* Calculate Start Time Button */}
+        <div className="mb-6">
           <button
-            onClick={handlePlayPause}
-            className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors duration-200"
+            onClick={jumpToCalculatedStart}
+            disabled={playlist.videos.length < 2}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-md transition-colors duration-200 flex items-center gap-2"
           >
-            {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+            <RotateCcw size={16} />
+            Calculate & Auto-Play Playlist
           </button>
+          {calculatedStartTime !== null && (
+            <div className="mt-2 space-y-1">
+              <p className="text-sm text-gray-600">
+                Video1 will start at: {formatTime(calculatedStartTime)}
+              </p>
+              <p className="text-sm text-green-600">
+                Video2 will start at: {playlist.targetTime}
+              </p>
+            </div>
+          )}
+          {playlist.videos.length < 2 && (
+            <p className="mt-2 text-sm text-red-600">
+              Need at least 2 videos in playlist to calculate timing
+            </p>
+          )}
+        </div>
 
-          <div className="flex-1 mx-4">
-            <div className="text-sm text-gray-600">
-              {formatTime(currentTime)} / {formatTime(duration)}
+        {/* Video Player */}
+        {videoSrc && (
+          <div className="mb-4">
+            <video
+              ref={videoRef}
+              src={videoSrc}
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={handleLoadedMetadata}
+              onEnded={handleVideoEnd}
+              className="w-full rounded-lg"
+              controls={false}
+            />
+          </div>
+        )}
+
+        {/* Timeline Preview */}
+        {duration > 0 && (
+          <div className="mb-4">
+            <canvas
+              ref={canvasRef}
+              width={800}
+              height={60}
+              onClick={handleSeek}
+              className="w-full h-15 bg-gray-200 rounded cursor-pointer"
+            />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>0:00</span>
+              <span>
+                {playlist.currentVideoIndex === 0 && playlist.videos.length >= 2
+                  ? `Video2 starts: ${formatTime(playlist.videos[0]?.duration || 0)}`
+                  : `Video ${playlist.currentVideoIndex + 1}`
+                }
+              </span>
+              <span>{formatTime(duration)}</span>
             </div>
           </div>
+        )}
 
-          <div className="text-sm text-gray-500">
-            Current: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        {/* Controls */}
+        {videoSrc && (
+          <div className="flex items-center justify-between">
+            <button
+              onClick={handlePlayPause}
+              className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors duration-200"
+            >
+              {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+            </button>
+
+            <div className="flex-1 mx-4">
+              <div className="text-sm text-gray-600">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </div>
+            </div>
+
+            <div className="text-sm text-gray-500">
+              <div>Video {playlist.currentVideoIndex + 1} of {playlist.videos.length}</div>
+              <div>Current: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

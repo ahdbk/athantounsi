@@ -4,7 +4,7 @@
 ## Project Overview
 A Next.js video player application that allows users to schedule video milestones to play at specific target times. The app calculates when to start a video so that an important milestone (timestamp) occurs at a user-specified target time.
 ## Plan and Review
-
+claude
 Before Starting Work
 Before you begin, write a detailed implementation plan in a file named claude/tasks/TASK_NAME.md.
 
